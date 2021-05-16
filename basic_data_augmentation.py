@@ -77,11 +77,6 @@ class BasicDataAugmentation:
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
 
-        # My variables
-        self.output_dir = "/tmp"
-        self.layers_added = []
-
-
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
         """Get the translation for a string using Qt translation API.
@@ -96,7 +91,6 @@ class BasicDataAugmentation:
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
         return QCoreApplication.translate('BasicDataAugmentation', message)
-
 
     def add_action(
         self,
@@ -185,7 +179,6 @@ class BasicDataAugmentation:
         # will be set False in run()
         self.first_start = True
 
-
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
@@ -194,184 +187,97 @@ class BasicDataAugmentation:
                 action)
             self.iface.removeToolBarIcon(action)
 
-
     def select_output_file(self):
-        filename, _filter = QFileDialog.getSaveFileName(
-            self.dlg, "Select   output file ","",)
-        self.dlg.lineEdit.setText(filename)
+        _dir = QFileDialog.getExistingDirectory(self.dlg, "Select output directory ")
+        self.dlg.lineEdit.setText(_dir)
 
-    # read gdal selected layer
-    def readGdal(self,src=None):
+    def readLayer(self, src=None):
+
+        # if src not provided read path selected layer
         if(src == None): 
-            gdal.Open( self.selectedLayerPath )
+            self.dataset = gdal.Open( self.selectedLayerPath )
         else:
-            gdal.Open( src )
+            self.dataset = gdal.Open( src )
 
-        self.src_ds     = gdal.Open( self.selectedLayerPath )
-        self.dataset    = self.src_ds
-        # self.prj        = self.src_ds.GetProjection()
-        self.band       = self.src_ds.GetRasterBand(1)
-        self.band_arr   = self.band.ReadAsArray()
-        return self.band_arr.copy()
+        # Get first band -- considering only one band tif as input
+        self.band       = self.dataset.GetRasterBand(1)
+        self.bandArr   = self.band.ReadAsArray()
 
-    def getNewArr(self):
-        arr = self.readGdal()
-        arr = np.where(arr>50, 1, 0) # especifico pro CBERS
-        return arr # retorna mascara 0 e 1 
+        # Get properties to save later
+        self.geoTransform = self.dataset.GetGeoTransform()
+        self.projection = self.dataset.GetProjection()
 
-    def saveGdalOLDProjectionErr(self, src_filename, dst_filename):
-        
+        return self.bandArr.copy()
 
-        # pegando shape x e y
-        selectedLayer = self.readGdal()
-        SelectedLayer_shape = selectedLayer.shape
-
-        # setando projecao geografica
-        srs = osr.SpatialReference()
-        srs.ImportFromEPSG(27700)
-
-        # salvando
-        driver = gdal.GetDriverByName('GTiff')
-        dst_ds = driver.Create(dst_filename, SelectedLayer_shape[1], SelectedLayer_shape[0])
-
-        # projecao
-        dst_ds.SetProjection(self.prj)
-
-        band = dst_ds.GetRasterBand(1)
-        arr = band.ReadAsArray()  # raster values are all zero
-
-        # modificando dados
-        arr = self.getNewArr()  # modify data
-
-        band.WriteArray(arr)  # raster file still unmodified
-        band = None  # dereference band to avoid gotcha described previously
-        dst_ds = None  # save, close
-
-    def saveGdalSAFE(self, src_filename, dst_filename):
-        ds = gdal.Open(src_filename)
-        band = ds.GetRasterBand(1)
-        arr = band.ReadAsArray()
+    def saveLayer(self, dst, arr):
 
         [rows, cols] = arr.shape
-        # arr_min = arr.min()
-        # arr_max = arr.max()
-        # arr_mean = int(arr.mean())
-        # arr_out = np.where((arr < arr_mean), 10000, arr)
-
-        arr_out = self.getNewArr()
 
         driver = gdal.GetDriverByName("GTiff")
-        outdata = driver.Create(dst_filename, cols, rows, 1, gdal.GDT_UInt16)
+        outdata = driver.Create(dst, cols, rows, 1, gdal.GDT_UInt16)
 
-        outdata.SetGeoTransform(ds.GetGeoTransform()) ##sets same geotransform as input
-        outdata.SetProjection(ds.GetProjection()) ##sets same projection as input
-        outdata.GetRasterBand(1).WriteArray(arr_out)
-        outdata.GetRasterBand(1).SetNoDataValue(10000) ##if you want these values transparent
+        outdata.SetGeoTransform(self.geoTransform)
+        outdata.SetProjection(self.projection) 
+        outdata.GetRasterBand(1).WriteArray(arr)
+        outdata.GetRasterBand(1).SetNoDataValue(10000)
 
         outdata.FlushCache()
 
         outdata = None
-        band=None
-        ds=None
     
-    def saveGdal(self, src_filename, dst_filename, arr_out):
-        ds = gdal.Open(src_filename)
-        # band = ds.GetRasterBand(1)
-        # arr = band.ReadAsArray()
-
-        [rows, cols] = arr_out.shape
-
-
-        driver = gdal.GetDriverByName("GTiff")
-        outdata = driver.Create(dst_filename, cols, rows, 1, gdal.GDT_UInt16)
-        
-
-        outdata.SetGeoTransform(ds.GetGeoTransform()) ##sets same geotransform as input
-        outdata.SetProjection(ds.GetProjection()) ##sets same projection as input
-        outdata.GetRasterBand(1).WriteArray(arr_out)
-        outdata.GetRasterBand(1).SetNoDataValue(10000) ##if you want these values transparent
-
-        outdata.FlushCache()
-
-        outdata = None
-        # band=None
-        ds=None
-    
-
     def flip(self):
+        
         flip = dict()
-        flip["hor"] = np.flipud(self.band_arr)
-        flip["ver"] = np.fliplr(self.band_arr)
-        self.output_flip = None
 
-        # salvando os meotdos de flip
+        flip["hor"] = np.flipud(self.bandArr)
+        flip["ver"] = np.fliplr(self.bandArr)
+
         for method in flip:
-            # montando nome
-            output_name = self.sat_name.split(".")[0] + "_" + method.upper() + "_" + self.sat_name.split(".")[1]
+
+            output_name = self.satName.split(".")[0] + "_" + method.upper() + "." + self.satName.split(".")[1]
             output_flip = os.path.join(self.output_dir, output_name)
 
-            self.saveGdal(self.selectedLayerPath, output_flip, flip[method])
-            self.layers_added.append(output_flip) # guardando em uma variavel para plotar dps
-            
-        # # ja existe?
-        # if(os.path.isdir(self.output)):
-        #     os.remove(self.output) # remove
+            self.saveLayer(output_flip, flip[method])
+            self.layers_added.append(output_flip)
 
-        # Abrir layer na tela
-        # self.iface.addRasterLayer(self.output, "teste")
+    def rotate(self, mode):
 
-
-    def rotate(self, type):
-        # depois unificar rotate e flip
         rotate = dict()
-        if(type == 90):
-            rotate["rot90"]  = np.rot90(self.band_arr, k=1, axes=(0,1))
-        elif(type == 180):
-            rotate["rot180"] = np.rot90(self.band_arr, k=2, axes=(0,1))
-        
-        self.output_flip = None
 
-        # salvando os meotdos de flip
+        if  (mode == 90):  rotate["rot90"]  = np.rot90(self.bandArr, k=1, axes=(0,1))
+        elif(mode == 180): rotate["rot180"] = np.rot90(self.bandArr, k=2, axes=(0,1))
+
         for method in rotate:
-            # montando nome
-            output_name = self.sat_name.split(".")[0] + "_" + method.upper() + "_" + self.sat_name.split(".")[1]
-            output_rotate = os.path.join(self.output_dir, output_name)
 
-            self.saveGdal(self.selectedLayerPath, output_rotate, rotate[method])
-            self.layers_added.append(output_rotate) # guardando em uma variavel para plotar dps
+            output_name     = self.satName.split(".")[0] + "_" + method.upper() + "." + self.satName.split(".")[1]
+            output_rotate   = os.path.join(self.output_dir, output_name)
+
+            self.saveLayer(output_rotate, rotate[method])
+            self.layers_added.append(output_rotate)
             
-
     def checkBox(self):
+
         # Rotate 90
         if self.dlg.checkBox.isChecked():
-            self.options.append("90")
             self.rotate(90)
 
         # Rotate 180
         if self.dlg.checkBox_2.isChecked():
-            self.options.append("180")
             self.rotate(180)
 
         # Transform
         if self.dlg.checkBox_3.isChecked():
-            self.options.append("tranform")
-        
+            return
+
         # Mean filter
         if self.dlg.checkBox_4.isChecked():
-            self.options.append("filter")
+            return
 
         # Flip
         if self.dlg.checkBox_5.isChecked():
-            self.options.append("flip")
             self.flip()
 
-        
-
     def run(self):
-
-        self.options = []
-
-        # limpar pasta /tmp tudo .tif, .jpeg ...
 
         """Run method that performs all the real work"""
 
@@ -380,59 +286,66 @@ class BasicDataAugmentation:
         if self.first_start == True:
             self.first_start = False
             self.dlg = BasicDataAugmentationDialog()
-        
 
+            # On click button select output file
+            self.dlg.pushButton.clicked.connect(self.select_output_file)
+        
         # Fetch the currently loaded layers
         layers = QgsProject.instance().layerTreeRoot().children()
 
-
         # Clear the contents of the comboBox from previous runs
         self.dlg.comboBox.clear()
+
         # Populate the comboBox with names of all the loaded layers
-        self.dlg.comboBox.addItems([layer.name() for layer in layers])
-
-        # fazer esta validacao dps tbm
-        if not(len(layers) == 0):
-            # Selected layer
-            self.selectedLayerIndex = self.dlg.comboBox.currentIndex()
-            self.selectedLayer = layers[self.selectedLayerIndex].layer()
-            self.selectedLayerPath = self.selectedLayer.dataProvider().dataSourceUri()
-            self.sat_name = os.path.split(self.selectedLayerPath)[-1]
-            self.dlg.pushButton.clicked.connect(self.select_output_file)
-
-            # filename = self.dlg.lineEdit.text()
-
-
-            # print(f"Layer: {self.selectedLayer.dataProvider().dataSourceUri()}")
-
-            # read image
-            self.readGdal()
-
-        # print("Reading selectedLayer")
-        # self.dataset = gdal.Open(self.selectedLayer.dataProvider().dataSourceUri(), gdal.GA_ReadOnly)
-
-        # print("Reading as aray")
-        # self.img     = self.dataset.GetRasterBand(1).ReadAsArray()
+        # Check if there is any layers
+        if not(len(layers) == 0): self.dlg.comboBox.addItems([layer.name() for layer in layers])
 
         # show the dialog
         self.dlg.show()
+
         # Run the dialog event loop
         result = self.dlg.exec_()
+
         # See if OK was pressed
         if result:
 
-            # verifica checkbox
+            self.layers_added       = []
+            self.selectedLayerIndex = None
+            self.filename           = None
+            self.selectedLayer      = None
+            self.selectedLayerPath  = None
+            self.satName            = None
+
+
+            # Get selected layer index
+            self.selectedLayerIndex = self.dlg.comboBox.currentIndex()
+
+            # Get output path
+            self.output_dir = self.dlg.lineEdit.text()
+
+            # Required fields
+            if(len(layers) == 0 or self.output_dir == ""):
+                self.iface.messageBar().pushMessage("Error", "Missing output directory", level=Qgis.Critical)
+                return  
+
+            # Get selected layer
+            self.selectedLayer     = layers[self.selectedLayerIndex].layer()
+            self.selectedLayerPath = self.selectedLayer.dataProvider().dataSourceUri()
+            self.satName           = os.path.split(self.selectedLayerPath)[-1]
+
+            # Get array and info from selected layer
+            self.readLayer()
+
+            # check chosen methods
             self.checkBox()
 
-            # plotando mudancas
+            # plot output layers
             for l in self.layers_added:
-                name = os.path.split(l)[1]
-                self.iface.addRasterLayer(l, name)
+                self.iface.addRasterLayer(l, os.path.split(l)[1])
 
-            # Do something useful here - delete the line containing pass and
-            # substitute with your code.
-            self.iface.messageBar().pushMessage(
-                f"OPTIONS: {self.options}\n" + 
-                f"SelectedLayer: {self.selectedLayer.dataProvider().dataSourceUri()} \n"
-                # f"Image as array: {self.img}",
-                ,level=Qgis.Success, duration=5)
+            # message success
+            
+            # msg = f"SelectedLayer: {self.selectedLayer.dataProvider().dataSourceUri()}"
+            # self.iface.messageBar().pushMessage( msg, level=Qgis.Success, duration=5)
+
+            self.iface.messageBar().pushMessage( "Success!", level=Qgis.Success, duration=3)
