@@ -22,9 +22,11 @@
  ***************************************************************************/
 """
 import os
-
+import shutil
 # import tensorflow as tf
 # import tensorflow_addons as tfa
+
+from random import randint
 
 from osgeo import gdal, osr
 from qgis.utils import iface
@@ -34,6 +36,9 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
 
 import numpy as np
+from scipy.ndimage import gaussian_filter
+from skimage.transform import resize
+import cv2
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -225,58 +230,167 @@ class BasicDataAugmentation:
 
         outdata = None
     
-    def flip(self):
-        
-        flip = dict()
+    # Rotação:
+    def rotate(self, img, degrees):
+        return (np.rot90(img, k=int(degrees / 90)))
 
-        flip["hor"] = np.flipud(self.bandArr)
-        flip["ver"] = np.fliplr(self.bandArr)
+    # Espelhamento:
+    def flip(self, img, direction):
+        if (direction == "vertical"):
+            return (img[::-1, ::])
+        elif (direction == "horizontal"):
+            return (img[::, ::-1])
+        elif (direction == "both"):
+            return (img[::-1, ::-1])
 
-        for method in flip:
+    # Aparagem:
+    def trim(self, img, top=0, bottom=0, left=0, right=0):
+        return (img[top:-bottom, right:-left])
 
-            output_name = self.satName.split(".")[0] + "_" + method.upper() + "." + self.satName.split(".")[1]
-            output_flip = os.path.join(self.output_dir, output_name)
+    # Recorte:
+    def crop(self, img, right=0, top=0, left=100, bottom=100):
+        return (img[top:bottom, right:left])
 
-            self.saveLayer(output_flip, flip[method])
-            self.layers_added.append(output_flip)
+    # Gaussian blur:
+    def blur(self, img, sigma=1):
+        return(gaussian_filter(img, sigma=sigma))
 
-    def rotate(self, mode):
+    # Redimensionamento:
+    def rescale(self, img, ratio):
+        return (resize(img, (int(img.shape[1] * ratio), int(img.shape[0] * ratio))))
 
-        rotate = dict()
+    # Binarização:
+    def binary(self, img, threshold=120, inv=False, bw=True):
+        if (inv == False):
+            method = cv2.THRESH_BINARY
+        else:
+            method = cv2.THRESH_BINARY_INV
 
-        if  (mode == 90):  rotate["rot90"]  = np.rot90(self.bandArr, k=1, axes=(0,1))
-        elif(mode == 180): rotate["rot180"] = np.rot90(self.bandArr, k=2, axes=(0,1))
+        if (bw == True):
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        for method in rotate:
+        return(cv2.threshold(img, threshold, 255, method)[1])
 
-            output_name     = self.satName.split(".")[0] + "_" + method.upper() + "." + self.satName.split(".")[1]
-            output_rotate   = os.path.join(self.output_dir, output_name)
+    # Truncagem:
+    def trunc(self, img, threshold=120, max=255):
+        return (cv2.threshold(img, threshold, max, cv2.THRESH_TRUNC)[1])
 
-            self.saveLayer(output_rotate, rotate[method])
-            self.layers_added.append(output_rotate)
-            
+    # Extração e realce de bordas:
+    def edgy(self, img, threshold=120, max=255, aperture=3, mask=True):
+        edges = cv2.Canny(img, threshold, max, aperture)
+
+        if (mask == True):
+            return (cv2.bitwise_and(img, img, mask=cv2.bitwise_not(edges)))
+
+        return(edges)
+    
+    # Rotina de data augmentation:
+    def augmentate(self, img, chunks=100, invert=3, rotations=3, blur_sigmas=5):
+        res = []
+        areas = []
+
+        while (len(areas) != chunks):
+            x = randint(0, img.shape[1] - 100)
+            y = randint(0, img.shape[0] - 100)
+            if ((x, y) not in areas):
+                areas.append((x, y))
+
+        for coords in areas:
+            nimg = self.crop(img, coords[0], coords[1], coords[0] + 100, coords[1] + 100)
+
+            for x in [nimg, self.flip(nimg, "vertical"), self.flip(nimg, "horizontal"), self.flip(nimg, "both")][:invert + 1]:
+                for y in [0, 90, 180, 270][:rotations + 1]:
+                    res.append(self.rotate(x, y))
+                    for s in range(1, blur_sigmas + 1):
+                        res.append(self.rotate(self.blur(x, sigma=s), y))
+
+        return (res)
+
     def checkBox(self):
 
-        # Rotate 90
+        _out = os.path.join(self.outputDir, self.satName)
+        root, ext = os.path.splitext(_out) # check ext
+        
+
+        # Rotate
         if self.dlg.checkBox.isChecked():
-            self.rotate(90)
-
-        # Rotate 180
-        if self.dlg.checkBox_2.isChecked():
-            self.rotate(180)
-
-        # Transform
-        if self.dlg.checkBox_3.isChecked():
-            return
-
-        # Mean filter
-        if self.dlg.checkBox_4.isChecked():
-            return
+            _out = root + "_ROTATE.tif"
+            self.saveLayer(_out, self.rotate(self.bandArr, 90))
+            self.layersAdded.append(_out)
 
         # Flip
-        if self.dlg.checkBox_5.isChecked():
-            self.flip()
+        if self.dlg.checkBox_2.isChecked():
+            flipOpt = ["vertical", "horizontal", "both"]
+            for fo in flipOpt:
+                _out = root + f"_{fo.upper()}.tif"
+                self.saveLayer(_out, self.flip(self.bandArr, fo))
+                self.layersAdded.append(_out)
 
+        # Trim
+        if self.dlg.checkBox_3.isChecked():
+            _out = root + "_TRIM.tif"
+            self.saveLayer(_out, self.trim(self.bandArr, 200, 200, 20, 20))
+            self.layersAdded.append(_out)
+
+        # Crop
+        if self.dlg.checkBox_4.isChecked():
+            _out = root + "_CROP.tif"
+            self.saveLayer(_out, self.crop(self.bandArr, 100, 100, 200, 200))
+            self.layersAdded.append(_out)
+
+        # Blur
+        if self.dlg.checkBox_5.isChecked():
+            _out = root + "_BLUR.tif"
+            self.saveLayer(_out, self.blur(self.bandArr, sigma=2))
+            self.layersAdded.append(_out)
+        
+        # Rescale
+        if self.dlg.checkBox_6.isChecked():
+            _out = root + "_RESCALE.tif"
+            self.saveLayer(_out, self.rescale(self.bandArr, 0.5))
+            self.layersAdded.append(_out)
+
+        # Augmentate
+        if self.dlg.checkBox_7.isChecked():
+
+            _outDirAug = os.path.join(self.outputDir, "augmentation")
+
+            # Remove folder
+            if(os.path.isdir(_outDirAug)): shutil.rmtree(_outDirAug) 
+
+            os.mkdir(_outDirAug)
+
+            # generates images
+            images = self.augmentate(self.bandArr)
+            
+            self.iface.messageBar().pushMessage( f"Images: {len(images)}", level=Qgis.Info, duration=3)
+        
+            for idx, image in enumerate(images[:100]):
+                name, ext = os.path.splitext(self.satName)
+                name = name + "_" + str(idx) + ".tif"
+                _outFileAug = os.path.join(_outDirAug, name)
+                self.saveLayer(_outFileAug, image)
+            
+
+
+        # Binary
+        if self.dlg.checkBox_8.isChecked():
+            _out = root + "_BINARY.tif"
+            self.saveLayer(_out, self.binary(self.bandArr, bw=False, threshold=50, inv=True))
+            self.layersAdded.append(_out)
+
+        # Truncate
+        if self.dlg.checkBox_9.isChecked():
+            _out = root + "_TRUNC.tif"
+            self.saveLayer(_out, self.trunc(self.bandArr, 100, 200))
+            self.layersAdded.append(_out)
+
+        # Edgy
+        if self.dlg.checkBox_10.isChecked():
+            _out = root + "_EDGY.tif"
+            self.saveLayer(_out, self.edgy(self.bandArr))
+            self.layersAdded.append(_out)
+        
     def run(self):
 
         """Run method that performs all the real work"""
@@ -309,7 +423,7 @@ class BasicDataAugmentation:
         # See if OK was pressed
         if result:
 
-            self.layers_added       = []
+            self.layersAdded        = []
             self.selectedLayerIndex = None
             self.filename           = None
             self.selectedLayer      = None
@@ -321,12 +435,12 @@ class BasicDataAugmentation:
             self.selectedLayerIndex = self.dlg.comboBox.currentIndex()
 
             # Get output path
-            self.output_dir = self.dlg.lineEdit.text()
+            self.outputDir  = self.dlg.lineEdit.text()
 
             # Required fields
-            if(len(layers) == 0 or self.output_dir == ""):
+            if(len(layers) == 0 or self.outputDir == ""):
                 self.iface.messageBar().pushMessage("Error", "Missing output directory", level=Qgis.Critical)
-                return  
+                return
 
             # Get selected layer
             self.selectedLayer     = layers[self.selectedLayerIndex].layer()
@@ -340,12 +454,13 @@ class BasicDataAugmentation:
             self.checkBox()
 
             # plot output layers
-            for l in self.layers_added:
+            for l in self.layersAdded:
                 self.iface.addRasterLayer(l, os.path.split(l)[1])
 
             # message success
             
             # msg = f"SelectedLayer: {self.selectedLayer.dataProvider().dataSourceUri()}"
+            # msg = f"Output: {self.output_dir}"
             # self.iface.messageBar().pushMessage( msg, level=Qgis.Success, duration=5)
 
             self.iface.messageBar().pushMessage( "Success!", level=Qgis.Success, duration=3)
