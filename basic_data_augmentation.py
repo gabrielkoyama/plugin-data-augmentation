@@ -34,6 +34,7 @@ from qgis.core import QgsProject, Qgis
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
+from qgis.gui import QgsCollapsibleGroupBox
 
 import numpy as np
 from scipy.ndimage import gaussian_filter
@@ -310,48 +311,103 @@ class BasicDataAugmentation:
 
         _out = os.path.join(self.outputDir, self.satName)
         root, ext = os.path.splitext(_out) # check ext
-        
 
-        # Rotate
-        if self.dlg.checkBox.isChecked():
-            _out = root + "_ROTATE.tif"
+        # Button names
+
+        # cbxRotate90
+        # cbxRotate180
+        # cbxRotate270
+        
+        # cbxTrim
+        # cbxCrop
+        # cbxRescale
+        # cbxTruncate
+
+        # cbxFlipHor
+        # cbxFlipVer
+
+        # cbxBinary 
+        # cbxEdgy
+
+        # cbxGaussian
+
+        # cbxAugmentate
+        # cbxAddLayer
+
+        # Rotate90
+        if self.dlg.cbxRotate90.isChecked():
+            _out = root + "_ROTATE90.tif"
             self.saveLayer(_out, self.rotate(self.bandArr, 90))
             self.layersAdded.append(_out)
 
-        # Flip
-        if self.dlg.checkBox_2.isChecked():
-            flipOpt = ["vertical", "horizontal", "both"]
-            for fo in flipOpt:
-                _out = root + f"_{fo.upper()}.tif"
-                self.saveLayer(_out, self.flip(self.bandArr, fo))
-                self.layersAdded.append(_out)
-
-        # Trim
-        if self.dlg.checkBox_3.isChecked():
-            _out = root + "_TRIM.tif"
-            self.saveLayer(_out, self.trim(self.bandArr, 200, 200, 20, 20))
+        # Rotate180
+        if self.dlg.cbxRotate180.isChecked():
+            _out = root + "_ROTATE180.tif"
+            self.saveLayer(_out, self.rotate(self.bandArr, 180))
             self.layersAdded.append(_out)
 
-        # Crop
-        if self.dlg.checkBox_4.isChecked():
-            _out = root + "_CROP.tif"
-            self.saveLayer(_out, self.crop(self.bandArr, 100, 100, 200, 200))
+        # Rotate270
+        if self.dlg.cbxRotate270.isChecked():
+            _out = root + "_ROTATE270.tif"
+            self.saveLayer(_out, self.rotate(self.bandArr, 270))
             self.layersAdded.append(_out)
 
-        # Blur
-        if self.dlg.checkBox_5.isChecked():
+        # Flip Hor
+        if self.dlg.cbxFlipHor.isChecked():
+            _out = root + "_FLIP_HOR.tif"
+            self.saveLayer(_out, self.flip(self.bandArr, 'horizontal'))
+            self.layersAdded.append(_out)
+
+        # Flip Ver
+        if self.dlg.cbxFlipVer.isChecked():
+            _out = root + "_FLIP_VER.tif"
+            self.saveLayer(_out, self.flip(self.bandArr, "vertical"))
+            self.layersAdded.append(_out)
+
+        # Gaussian
+        if self.dlg.cbxGaussian.isChecked():
             _out = root + "_BLUR.tif"
             self.saveLayer(_out, self.blur(self.bandArr, sigma=2))
             self.layersAdded.append(_out)
-        
+
         # Rescale
-        if self.dlg.checkBox_6.isChecked():
+        if self.dlg.cbxRescale.isChecked():
             _out = root + "_RESCALE.tif"
             self.saveLayer(_out, self.rescale(self.bandArr, 0.5))
             self.layersAdded.append(_out)
 
+        # Crop
+        if self.dlg.cbxCrop.isChecked():
+            _out = root + "_CROP.tif"
+            self.saveLayer(_out, self.crop(self.bandArr, 100, 100, 200, 200))
+            self.layersAdded.append(_out)
+
+        # Truncate
+        if self.dlg.cbxTruncate.isChecked():
+            _out = root + "_TRUNC.tif"
+            self.saveLayer(_out, self.trunc(self.bandArr, 100, 200))
+            self.layersAdded.append(_out)
+
+        # Trim
+        if self.dlg.cbxTrim.isChecked():
+            _out = root + "_TRIM.tif"
+            self.saveLayer(_out, self.trim(self.bandArr, 200, 200, 20, 20))
+            self.layersAdded.append(_out)
+
+        # Binary
+        if self.dlg.cbxBinary.isChecked():
+            _out = root + "_BINARY.tif"
+            self.saveLayer(_out, self.binary(self.bandArr, bw=False, threshold=50, inv=True))
+            self.layersAdded.append(_out)
+
+        # Edgy
+        if self.dlg.cbxEdgy.isChecked():
+            _out = root + "_EDGY.tif"
+            self.saveLayer(_out, self.edgy(self.bandArr))
+            self.layersAdded.append(_out)
+
         # Augmentate
-        if self.dlg.checkBox_7.isChecked():
+        if self.dlg.cbxAugmentate.isChecked():
 
             _outDirAug = os.path.join(self.outputDir, "augmentation")
 
@@ -370,26 +426,7 @@ class BasicDataAugmentation:
                 name = name + "_" + str(idx) + ".tif"
                 _outFileAug = os.path.join(_outDirAug, name)
                 self.saveLayer(_outFileAug, image)
-            
-
-
-        # Binary
-        if self.dlg.checkBox_8.isChecked():
-            _out = root + "_BINARY.tif"
-            self.saveLayer(_out, self.binary(self.bandArr, bw=False, threshold=50, inv=True))
-            self.layersAdded.append(_out)
-
-        # Truncate
-        if self.dlg.checkBox_9.isChecked():
-            _out = root + "_TRUNC.tif"
-            self.saveLayer(_out, self.trunc(self.bandArr, 100, 200))
-            self.layersAdded.append(_out)
-
-        # Edgy
-        if self.dlg.checkBox_10.isChecked():
-            _out = root + "_EDGY.tif"
-            self.saveLayer(_out, self.edgy(self.bandArr))
-            self.layersAdded.append(_out)
+                # self.layersAdded.append(_outFileAug) ## add to layer
         
     def run(self):
 
@@ -453,9 +490,10 @@ class BasicDataAugmentation:
             # check chosen methods
             self.checkBox()
 
-            # plot output layers
-            for l in self.layersAdded:
-                self.iface.addRasterLayer(l, os.path.split(l)[1])
+            # plot output layers cbxAddLayer
+            if self.dlg.cbxAddLayer.isChecked():
+                for l in self.layersAdded:
+                    self.iface.addRasterLayer(l, os.path.split(l)[1])
 
             # message success
             
@@ -464,3 +502,5 @@ class BasicDataAugmentation:
             # self.iface.messageBar().pushMessage( msg, level=Qgis.Success, duration=5)
 
             self.iface.messageBar().pushMessage( "Success!", level=Qgis.Success, duration=3)
+
+            
